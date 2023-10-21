@@ -5,13 +5,11 @@ go 1.21.3
 require (
 	github.com/cosi-project/runtime v0.3.1
 	github.com/hashicorp/go-multierror v1.1.1
-	github.com/lion7/extcap v0.0.0-00010101000000-000000000000
+	github.com/lion7/extcap v0.0.0-20231020162853-b3347443df85
 	github.com/siderolabs/talos v1.5.4
 	github.com/siderolabs/talos/pkg/machinery v1.5.4
 	google.golang.org/grpc v1.59.0
 )
-
-replace github.com/lion7/extcap => ../extcap
 
 require (
 	github.com/Azure/go-ansiterm v0.0.0-20210617225240-d185dfc1b5a1 // indirect
