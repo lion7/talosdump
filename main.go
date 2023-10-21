@@ -56,29 +56,37 @@ func getAllInterfaces() ([]extcap.CaptureInterface, error) {
 		return nil, err
 	}
 
-	links, err := getTalosLinks()
-	if err != nil {
-		return nil, err
-	}
-
 	var ifaces []extcap.CaptureInterface
-	for _, link := range links {
-		// only include physical ethernet links
-		if !link.TypedSpec().Physical() {
-			continue
+	for _, member := range members {
+		node := member.TypedSpec().Hostname
+		links, err := getTalosLinks(node)
+		if err != nil {
+			return nil, err
 		}
-		iface := extcap.CaptureInterface{
-			Value:   link.Metadata().ID(),
-			Display: "talosdump: " + members[0].TypedSpec().Hostname,
+
+		for _, link := range links {
+			// only include physical ethernet links
+			if !link.TypedSpec().Physical() {
+				continue
+			}
+			iface := extcap.CaptureInterface{
+				Value:   link.Metadata().ID() + "@" + node,
+				Display: "talosdump",
+			}
+			ifaces = append(ifaces, iface)
 		}
-		ifaces = append(ifaces, iface)
 	}
 
 	return ifaces, nil
 }
 
 func getDLT(iface string) (extcap.DLT, error) {
-	link, err := getTalosLink(iface)
+	linkId, node, err := splitLinkAndNode(iface)
+	if err != nil {
+		return extcap.DLT{}, err
+	}
+
+	link, err := getTalosLink(node, linkId)
 	if err != nil {
 		return extcap.DLT{}, err
 	}
@@ -89,8 +97,9 @@ func getDLT(iface string) (extcap.DLT, error) {
 
 	linkType := link.TypedSpec().Type
 	dlt := extcap.DLT{
-		Number: int(linkType),
-		Name:   linkType.String(),
+		Number:  int(linkType),
+		Name:    linkType.String(),
+		Display: iface,
 	}
 
 	return dlt, nil
@@ -115,61 +124,84 @@ func startCapture(iface string, pipe io.WriteCloser, filter string, opts map[str
 	//goland:noinspection GoUnhandledErrorResult
 	defer pipe.Close()
 
+	// handle input parameters
+	linkId, node, err := splitLinkAndNode(iface)
+	if err != nil {
+		return err
+	}
+
 	if filter == "" {
 		// default to excluding port 50000 over which pcap packets are transmitted
 		filter = "not port 50000"
 	}
 
-	return talos.WithClient(func(ctx context.Context, c *client.Client) error {
-		if err := helpers.FailIfMultiNodes(ctx, "pcap"); err != nil {
+	promiscuous := false
+	promiscuousOpt, ok := opts["promiscuous"]
+	if ok {
+		promiscuous = promiscuousOpt.(bool)
+	}
+
+	snapLen := 65536
+	snapLenOpt, ok := opts["snaplen"]
+	if ok {
+		snapLen = snapLenOpt.(int)
+	}
+
+	var duration time.Duration
+	durationOpt, ok := opts["duration"]
+	if ok {
+		var err error
+		duration, err = time.ParseDuration(durationOpt.(string))
+		if err != nil {
 			return err
 		}
+	}
 
-		durationOpt, ok := opts["duration"]
-		if ok {
+	// temporarily point stderr to /dev/null, because Talos will write to it on SIGTERM and Wireshark does not like it
+	stderr := os.Stderr
+	defer func() {
+		os.Stderr = stderr
+	}()
+	devNull, err := os.OpenFile(os.DevNull, os.O_RDWR, os.ModeDevice)
+	if err != nil {
+		return err
+	}
+	os.Stderr = devNull
+
+	// start the actual capture
+	return talos.WithClientNoNodes(func(ctx context.Context, c *client.Client) error {
+		// make sure we only capture on the selected node
+		ctx = client.WithNodes(ctx, node)
+
+		// set the duration as a timeout if provided
+		if duration > 0 {
 			var cancel context.CancelFunc
-
-			parsedDuration, err := time.ParseDuration(durationOpt.(string))
-			if err != nil {
-				return err
-			}
-
-			ctx, cancel = context.WithTimeout(ctx, parsedDuration)
+			ctx, cancel = context.WithTimeout(ctx, duration)
 			defer cancel()
 		}
 
-		promiscuous := false
-		promiscuousOpt, ok := opts["promiscuous"]
-		if ok {
-			promiscuous = promiscuousOpt.(bool)
-		}
-
-		snapLen := 65536
-		snapLenOpt, ok := opts["snaplen"]
-		if ok {
-			snapLen = snapLenOpt.(int)
-		}
-
+		// create the packet capture request
 		req := machine.PacketCaptureRequest{
-			Interface:   iface,
+			Interface:   linkId,
 			Promiscuous: promiscuous,
 			SnapLen:     uint32(snapLen),
 		}
 
 		var err error
 
+		// convert and parse the provided filter (Wireshark uses the tcpdump format) to a BPF filter
 		req.BpfFilter, err = convertTcpdumpFilterToBpfFilter(filter)
 		if err != nil {
 			return err
 		}
 
+		// start capturing packets
 		r, errCh, err := c.PacketCapture(ctx, &req)
 		if err != nil {
 			return fmt.Errorf("error copying: %w", err)
 		}
 
 		var wg sync.WaitGroup
-
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
@@ -181,7 +213,6 @@ func startCapture(iface string, pipe io.WriteCloser, filter string, opts map[str
 				_, _ = fmt.Fprintln(os.Stderr, err.Error())
 			}
 		}()
-
 		defer wg.Wait()
 
 		_, err = io.Copy(pipe, r)
@@ -194,8 +225,16 @@ func startCapture(iface string, pipe io.WriteCloser, filter string, opts map[str
 	})
 }
 
-func getTalosLink(iface string) (*network.LinkStatus, error) {
-	resources, err := getTalosResources(network.LinkStatusType, iface)
+func splitLinkAndNode(s string) (string, string, error) {
+	if !strings.Contains(s, "@") {
+		return "", "", fmt.Errorf("provided interface is not in the format 'link@node': %s", s)
+	}
+	split := strings.SplitN(s, "@", 2)
+	return split[0], split[1], nil
+}
+
+func getTalosLink(node string, iface string) (*network.LinkStatus, error) {
+	resources, err := getTalosResources(node, network.LinkStatusType, iface)
 	if err != nil {
 		return nil, err
 	}
@@ -212,9 +251,9 @@ func getTalosLink(iface string) (*network.LinkStatus, error) {
 	return nil, fmt.Errorf("failed to get link with id %s", iface)
 }
 
-func getTalosLinks() ([]*network.LinkStatus, error) {
+func getTalosLinks(node string) ([]*network.LinkStatus, error) {
 	var result []*network.LinkStatus
-	resources, err := getTalosResources(network.LinkStatusType, "")
+	resources, err := getTalosResources(node, network.LinkStatusType, "")
 	if err != nil {
 		return nil, err
 	}
@@ -229,7 +268,7 @@ func getTalosLinks() ([]*network.LinkStatus, error) {
 
 func getTalosMembers() ([]*cluster.Member, error) {
 	var result []*cluster.Member
-	resources, err := getTalosResources(cluster.MemberType, "")
+	resources, err := getTalosResources("", cluster.MemberType, "")
 	if err != nil {
 		return nil, err
 	}
@@ -242,9 +281,13 @@ func getTalosMembers() ([]*cluster.Member, error) {
 	return result, nil
 }
 
-func getTalosResources(resourceType resource.Type, resourceID string) ([]resource.Resource, error) {
+func getTalosResources(node string, resourceType resource.Type, resourceID string) ([]resource.Resource, error) {
 	var result []resource.Resource
 	err := talos.WithClient(func(ctx context.Context, c *client.Client) error {
+		if node != "" {
+			ctx = client.WithNodes(ctx, node)
+		}
+
 		var multiErr *multierror.Error
 		callbackRD := func(definition *meta.ResourceDefinition) error {
 			return nil
