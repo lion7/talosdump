@@ -1,5 +1,8 @@
 # IDE-specific directories and files
 /.idea
 
+# Helper binaries
+/bin
+
 # Main binary produced by `go build`
-/talosdump
+/talosdump*
