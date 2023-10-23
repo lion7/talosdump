@@ -44,6 +44,7 @@ func main() {
 		GetDLT:              getDLT,
 		GetAllConfigOptions: getAllConfigOptions,
 		GetConfigOptions:    getConfigOptions,
+		VerifyCaptureFilter: verifyCaptureFilter,
 		StartCapture:        startCapture,
 	}
 
@@ -116,6 +117,11 @@ func getAllConfigOptions() []extcap.ConfigOption {
 		Duration,
 	}
 	return opts
+}
+
+func verifyCaptureFilter(filter string) error {
+	_, err := convertTcpdumpFilterToBpfFilter(filter)
+	return err
 }
 
 // Most of this code is copied from / inspired by

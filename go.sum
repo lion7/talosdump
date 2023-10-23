@@ -626,8 +626,8 @@ github.com/kylelemons/godebug v1.1.0/go.mod h1:9/0rRGxNHcop5bhtWyNeEfOS8JIWk580+
 github.com/liggitt/tabwriter v0.0.0-20181228230101-89fcab3d43de h1:9TO3cAIGXtEhnIaL+V+BEER86oLrvS+kWobKpbJuye0=
 github.com/liggitt/tabwriter v0.0.0-20181228230101-89fcab3d43de/go.mod h1:zAbeS9B/r2mtpb6U+EI2rYA5OAXxsYw6wTamcNW+zcE=
 github.com/linuxkit/virtsock v0.0.0-20201010232012-f8cee7dfc7a3/go.mod h1:3r6x7q95whyfWQpmGZTu3gk3v2YkMi05HEzl7Tf7YEo=
-github.com/lion7/extcap v0.0.0-20231023062430-7f03ceb15a89 h1:79WoXvkntl8ah1ykmVLsGzLTekbOTWM2i87qCtlr2qs=
-github.com/lion7/extcap v0.0.0-20231023062430-7f03ceb15a89/go.mod h1:KiuFBt0p2HK8Oc8Q0X0bo2LytoF5dnNuzUzIxL1oohw=
+github.com/lion7/extcap v0.0.0-20231023065004-5653ee33628b h1:EHDRHGaRkuuvg39ZpQzclWOQOVfAoJ9hSDeUg+f8y64=
+github.com/lion7/extcap v0.0.0-20231023065004-5653ee33628b/go.mod h1:KiuFBt0p2HK8Oc8Q0X0bo2LytoF5dnNuzUzIxL1oohw=
 github.com/lucasb-eyer/go-colorful v1.2.0 h1:1nnpGOrhyZZuNyfu1QjKiUICQ74+3FNCN69Aj6K7nkY=
 github.com/lucasb-eyer/go-colorful v1.2.0/go.mod h1:R4dSotOR9KMtayYi1e77YzuveK+i7ruzyGqttikkLy0=
 github.com/magiconair/properties v1.8.0/go.mod h1:PppfXfuXeibc/6YijjN8zIbojt8czPbwD3XqdrwzmxQ=

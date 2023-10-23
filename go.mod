@@ -5,7 +5,7 @@ go 1.21.3
 require (
 	github.com/cosi-project/runtime v0.3.1
 	github.com/hashicorp/go-multierror v1.1.1
-	github.com/lion7/extcap v0.0.0-20231023062430-7f03ceb15a89
+	github.com/lion7/extcap v0.0.0-20231023065004-5653ee33628b
 	github.com/siderolabs/talos v1.5.4
 	github.com/siderolabs/talos/pkg/machinery v1.5.4
 	google.golang.org/grpc v1.59.0
