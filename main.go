@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/siderolabs/talos/pkg/machinery/resources/cluster"
 	"io"
 	"os"
 	"os/exec"
@@ -21,6 +20,7 @@ import (
 	"github.com/siderolabs/talos/cmd/talosctl/pkg/talos/helpers"
 	"github.com/siderolabs/talos/pkg/machinery/api/machine"
 	"github.com/siderolabs/talos/pkg/machinery/client"
+	"github.com/siderolabs/talos/pkg/machinery/resources/cluster"
 	"github.com/siderolabs/talos/pkg/machinery/resources/network"
 	"google.golang.org/grpc/codes"
 )
@@ -210,7 +210,7 @@ func startCapture(iface string, pipe io.WriteCloser, filter string, opts map[str
 					continue
 				}
 
-				_, _ = fmt.Fprintln(os.Stderr, err.Error())
+				_, _ = fmt.Fprintln(stderr, err.Error())
 			}
 		}()
 		defer wg.Wait()
