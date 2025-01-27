@@ -8,7 +8,6 @@ import (
 	"os"
 	"os/exec"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/cosi-project/runtime/pkg/resource"
@@ -202,24 +201,10 @@ func startCapture(iface string, pipe io.WriteCloser, filter string, opts map[str
 		}
 
 		// start capturing packets
-		r, errCh, err := c.PacketCapture(ctx, &req)
+		r, err := c.PacketCapture(ctx, &req)
 		if err != nil {
 			return fmt.Errorf("error copying: %w", err)
 		}
-
-		var wg sync.WaitGroup
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			for err := range errCh {
-				if client.StatusCode(err) == codes.DeadlineExceeded {
-					continue
-				}
-
-				_, _ = fmt.Fprintln(stderr, err.Error())
-			}
-		}()
-		defer wg.Wait()
 
 		_, err = io.Copy(pipe, r)
 
