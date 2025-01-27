@@ -4,7 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/siderolabs/talos/pkg/machinery/nethelpers"
 	"io"
+	"k8s.io/utils/strings/slices"
 	"os"
 	"os/exec"
 	"strings"
@@ -65,15 +67,15 @@ func getAllInterfaces() ([]extcap.CaptureInterface, error) {
 		}
 
 		for _, link := range links {
-			// only include physical ethernet links
-			if !link.TypedSpec().Physical() {
-				continue
+			spec := link.TypedSpec()
+			// only include physical, bridge or bond ethernet links
+			if spec.Type == nethelpers.LinkEther && slices.Contains([]string{"", "bridge", "bond"}, spec.Kind) {
+				iface := extcap.CaptureInterface{
+					Value:   link.Metadata().ID() + "@" + node,
+					Display: "talosdump",
+				}
+				ifaces = append(ifaces, iface)
 			}
-			iface := extcap.CaptureInterface{
-				Value:   link.Metadata().ID() + "@" + node,
-				Display: "talosdump",
-			}
-			ifaces = append(ifaces, iface)
 		}
 	}
 
