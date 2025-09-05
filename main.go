@@ -4,11 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/siderolabs/talos/pkg/machinery/nethelpers"
 	"io"
-	"k8s.io/utils/strings/slices"
 	"os"
-	"os/exec"
 	"strings"
 	"time"
 
@@ -17,6 +14,7 @@ import (
 	"github.com/cosi-project/runtime/pkg/resource/protobuf"
 	"github.com/hashicorp/go-multierror"
 	"github.com/lion7/extcap"
+	pcap "github.com/packetcap/go-pcap/filter"
 	"github.com/siderolabs/talos/cmd/talosctl/cmd/talos"
 	"github.com/siderolabs/talos/cmd/talosctl/pkg/talos/helpers"
 	"github.com/siderolabs/talos/pkg/machinery/api/machine"
@@ -68,8 +66,8 @@ func getAllInterfaces() ([]extcap.CaptureInterface, error) {
 
 		for _, link := range links {
 			spec := link.TypedSpec()
-			// only include physical, bridge or bond ethernet links
-			if spec.Type == nethelpers.LinkEther && slices.Contains([]string{"", "bridge", "bond"}, spec.Kind) {
+			// only include physical ethernet or bridge links
+			if spec.Physical() || spec.Kind == "bridge" {
 				iface := extcap.CaptureInterface{
 					Value:   link.Metadata().ID() + "@" + node,
 					Display: "talosdump",
@@ -121,7 +119,7 @@ func getAllConfigOptions() []extcap.ConfigOption {
 }
 
 func verifyCaptureFilter(filter string) error {
-	_, err := convertTcpdumpFilterToBpfFilter(filter)
+	_, err := compileTcpdumpFilterToBpfFilter(filter)
 	return err
 }
 
@@ -131,17 +129,19 @@ func startCapture(iface string, pipe io.WriteCloser, filter string, opts map[str
 	//goland:noinspection GoUnhandledErrorResult
 	defer pipe.Close()
 
-	// handle input parameters
+	// derive the linkId and node from the interface name
 	linkId, node, err := splitLinkAndNode(iface)
 	if err != nil {
 		return err
 	}
 
-	if filter == "" {
-		// default to excluding port 50000 over which pcap packets are transmitted
-		filter = "not port 50000"
+	// compile the provided filter (Wireshark uses the tcpdump format) to a BPF filter
+	bpfFilter, err := compileTcpdumpFilterToBpfFilter(filter)
+	if err != nil {
+		return err
 	}
 
+	// handle input parameters
 	promiscuous := false
 	promiscuousOpt, ok := opts["promiscuous"]
 	if ok {
@@ -192,14 +192,7 @@ func startCapture(iface string, pipe io.WriteCloser, filter string, opts map[str
 			Interface:   linkId,
 			Promiscuous: promiscuous,
 			SnapLen:     uint32(snapLen),
-		}
-
-		var err error
-
-		// convert and parse the provided filter (Wireshark uses the tcpdump format) to a BPF filter
-		req.BpfFilter, err = convertTcpdumpFilterToBpfFilter(filter)
-		if err != nil {
-			return err
+			BpfFilter:   bpfFilter,
 		}
 
 		// start capturing packets
@@ -318,54 +311,42 @@ func getTalosResources(node string, resourceType resource.Type, resourceID strin
 	return result, nil
 }
 
-func convertTcpdumpFilterToBpfFilter(filter string) ([]*machine.BPFInstruction, error) {
-	cmd := exec.Command("tcpdump", "-dd", "-y", "EN10MB", filter)
-	output, err := cmd.Output()
-	if err != nil {
-		return nil, fmt.Errorf("failed compiling BPF filter using tcpdump: %s", filter)
-	}
-
-	return parseBPFInstructions(string(output))
-}
-
-// parseBPFInstructions parses the BPF raw instructions in 'tcpdump -dd' format.
-//
-// Example:
-//
-//	{ 0x30, 0, 0, 0x00000000 },
-//	{ 0x54, 0, 0, 0x000000f0 },
-//	{ 0x15, 0, 8, 0x00000060 },
-//
-// Copied from:
-// https://github.com/siderolabs/talos/blob/6d71bb8df29840ee7422d4462498b3dab551c981/cmd/talosctl/cmd/talos/pcap.go#L155-L193
-//
-//nolint:dupword
-func parseBPFInstructions(in string) ([]*machine.BPFInstruction, error) {
-	in = strings.TrimSpace(in)
-
-	if in == "" {
+func compileTcpdumpFilterToBpfFilter(filter string) ([]*machine.BPFInstruction, error) {
+	if filter == "" {
 		return nil, nil
 	}
 
-	var result []*machine.BPFInstruction //nolint:prealloc
+	expr := pcap.NewExpression(filter)
+	if expr == nil {
+		return nil, fmt.Errorf("failed to create expression for filter '%s'", filter)
+	}
 
-	for _, line := range strings.Split(in, "\n") {
-		if line == "" {
-			continue
-		}
+	compiled := expr.Compile()
+	if compiled == nil {
+		return nil, fmt.Errorf("failed to compile expression for filter '%s'", filter)
+	}
 
-		ins := &machine.BPFInstruction{}
+	instructions, err := compiled.Compile()
+	if err != nil {
+		return nil, fmt.Errorf("failed compiling BPF filter '%s': %w", filter, err)
+	}
+	if instructions == nil {
+		return nil, nil
+	}
 
-		n, err := fmt.Sscanf(line, "{ 0x%x, %d, %d, 0x%x },", &ins.Op, &ins.Jt, &ins.Jf, &ins.K)
+	var result []*machine.BPFInstruction
+	for _, ins := range instructions {
+		raw, err := ins.Assemble()
 		if err != nil {
-			return nil, fmt.Errorf("error parsing bpf instruction %q: %w", line, err)
+			return nil, fmt.Errorf("failed assembling BPF instruction: %w", err)
 		}
 
-		if n != 4 {
-			return nil, fmt.Errorf("error parsing bpf instruction %q: expected 4 fields, got %d", line, n)
-		}
-
-		result = append(result, ins)
+		result = append(result, &machine.BPFInstruction{
+			Op: uint32(raw.Op),
+			Jt: uint32(raw.Jt),
+			Jf: uint32(raw.Jf),
+			K:  raw.K,
+		})
 	}
 
 	return result, nil
